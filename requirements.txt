@@ -1,6 +1,7 @@
 Flask
 pymysql
 flask_sqlalchemy
+flask_apscheduler
 sqlalchemy_utils
 sqlalchemy
 cryptography

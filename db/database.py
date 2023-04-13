@@ -1,8 +1,7 @@
 """Database handling"""
 import os
-from flask_sqlalchemy import SQLAlchemy
-
-db = SQLAlchemy()
+from typing import Optional
+from .models import db, Products, Offers
 
 # connection_string = "mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}".format(
 #     user=os.getenv('MYSQL_USER'),
@@ -14,7 +13,7 @@ db = SQLAlchemy()
 connection_string = "mysql+pymysql://root:root@localhost/offersdtb"
 
 
-def init_app(app, conn_string=connection_string):
+def init_app(app, conn_string=connection_string) -> None:
     """Init the database"""
     app.config['SQLALCHEMY_DATABASE_URI'] = conn_string
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -24,16 +23,28 @@ def init_app(app, conn_string=connection_string):
         db.create_all()
 
 
-def add_product_to_dtb(table, product_json) -> None:
-    """Add new product, defined by product_json to the database"""
-    product = table(id=product_json['id'], name=product_json['name'], description=product_json['description'])
+def add_product(product_json) -> None:
+    """Add new product, defined by product_json to database"""
+    product = Products(id=product_json['id'], name=product_json['name'], description=product_json['description'])
     db.session.add(product)
     db.session.commit()
 
 
-def update_product_in_dtb(table, product_id, new_name=None, new_description=None) -> bool:
-    """Update product with given id in the database"""
-    product = table.query.filter_by(product_id=product_id).first()
+def get_product_by_id(product_id) -> Optional[Products]:
+    """Return product by product_id from database"""
+    product = Products.query.filter_by(id=product_id).first()
+    return product
+
+
+def get_all_products() -> list:
+    """Return list of all products from database"""
+    products = Products.query.all()
+    return [product.to_dict() for product in products]
+
+
+def update_product(product_id, new_name=None, new_description=None) -> bool:
+    """Update product with given id in database"""
+    product = get_product_by_id(product_id)
     if product:
         if new_name:
             product.name = new_name
@@ -43,36 +54,45 @@ def update_product_in_dtb(table, product_id, new_name=None, new_description=None
     return bool(product)
 
 
-def delete_product_from_dtb(table, product_id) -> bool:
-    """Delete product with given id from the database"""
-    product = table.query.filter_by(id=product_id).first()
+def delete_product(product_id) -> bool:
+    """Delete product with given id from database"""
+    product = get_product_by_id(product_id)
     if product:
+        db.session.query(Offers).filter_by(product_id=product_id).delete()
         db.session.delete(product)
         db.session.commit()
     return bool(product)
 
 
-def add_offers_to_dtb(table, response, product_id) -> None:
+def add_offers(response, product_id) -> None:
     """Add new offers to database"""
     offers = response.json()
     for offer in offers:
-        offer = table(id=offer['id'], price=offer['price'], items_in_stock=offer['items_in_stock'],
+        offer = Offers(id=offer['id'], price=offer['price'], items_in_stock=offer['items_in_stock'],
                        product_id=product_id)
         db.session.add(offer)
     db.session.commit()
 
 
-def get_products(table) -> list:
-    """Return list of all products in database"""
-    products = table.query.all()
-    return [product.to_dict() for product in products]
-
-
-def get_offers(table, product_id=None) -> list:
+def get_offers(product_id=None) -> list:
     """Return list of all offers in database or all offers for product with given id"""
     if product_id:
-        offers = table.query.filter_by(product_id=product_id).all()
+        offers = Offers.query.filter_by(product_id=product_id).all()
     else:
-        offers = table.query.all()
+        offers = Offers.query.all()
 
     return [offer.to_dict() for offer in offers]
+
+
+def update_offers(offers) -> None:
+    """Update product with given id in database"""
+    for offer_dict in offers:
+        offer = Offers.query.get(offer_dict['id'])
+        offer.price = offer_dict['price']
+        offer.items_in_stock = offer_dict['items_in_stock']
+    db.session.commit()
+
+
+
+
+

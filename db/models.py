@@ -1,5 +1,6 @@
 """Module with database models"""
-from database import db
+from flask_sqlalchemy import SQLAlchemy
+db = SQLAlchemy()
 
 
 class Products(db.Model):
@@ -19,6 +20,11 @@ class Products(db.Model):
         }
 
 
+class TestProducts(Products):
+    """Class database model for Products for tests"""
+    __tablename__ = 'test_products'
+
+
 class Offers(db.Model):
     """Class database model for Offers"""
     # pylint: disable=too-few-public-methods
@@ -35,3 +41,8 @@ class Offers(db.Model):
             'items_in_stock': self.items_in_stock,
             'product_id': self.product_id
         }
+
+
+class TestOffers(Offers):
+    """Class database model for Offers for tests"""
+    __tablename__ = 'test_offers'
