@@ -2,22 +2,27 @@
 import os
 from typing import Optional
 from .models import db, Products, Offers
+from dotenv import load_dotenv
+from sqlalchemy_utils import create_database, database_exists
+load_dotenv()
 
-# connection_string = "mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}".format(
-#     user=os.getenv('MYSQL_USER'),
-#     passwd=os.getenv('MYSQL_PASSWORD'),
-#     host=os.getenv('MYSQL_HOST'),
-#     port=int(os.getenv('MYSQL_PORT')),
-#     db=os.getenv('MYSQL_DATABASE'))
+print(os.environ.get('MYSQL_USER'))
 
-connection_string = "mysql+pymysql://root:root@localhost/offersdtb"
+conn = "mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}".format(
+    user=os.environ.get('MYSQL_USER'),
+    passwd=os.environ.get('MYSQL_PASSWORD'),
+    host=os.environ.get('MYSQL_HOST'),
+    port=int(os.environ.get('MYSQL_PORT')),
+    db=os.environ.get('MYSQL_DATABASE'))
 
 
-def init_app(app, conn_string=connection_string) -> None:
-    """Init the database"""
-    app.config['SQLALCHEMY_DATABASE_URI'] = conn_string
+def init_app(app) -> None:
+    app.config['SQLALCHEMY_DATABASE_URI'] = conn
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     db.init_app(app)
+
+    if not database_exists(conn):
+        create_database(conn)
 
     with app.app_context():
         db.create_all()
@@ -74,13 +79,18 @@ def add_offers(response, product_id) -> None:
     db.session.commit()
 
 
-def get_offers(product_id=None) -> list:
-    """Return list of all offers in database or all offers for product with given id"""
-    if product_id:
-        offers = Offers.query.filter_by(product_id=product_id).all()
-    else:
-        offers = Offers.query.all()
+def get_offers_by_id(product_id) -> Optional[list]:
+    """Return product by product_id from database"""
+    product = Products.query.filter_by(id=product_id).first()
+    if not product:
+        return None
+    offers = Offers.query.filter_by(product_id=product_id).all()
+    return [offer.to_dict() for offer in offers]
 
+
+def get_all_offers() -> list:
+    """Return list of all offers in database or all offers for product with given id"""
+    offers = Offers.query.all()
     return [offer.to_dict() for offer in offers]
 
 
@@ -88,11 +98,7 @@ def update_offers(offers) -> None:
     """Update product with given id in database"""
     for offer_dict in offers:
         offer = Offers.query.get(offer_dict['id'])
-        offer.price = offer_dict['price']
-        offer.items_in_stock = offer_dict['items_in_stock']
+        if offer:
+            offer.price = offer_dict['price']
+            offer.items_in_stock = offer_dict['items_in_stock']
     db.session.commit()
-
-
-
-
-

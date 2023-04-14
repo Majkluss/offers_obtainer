@@ -7,3 +7,4 @@ sqlalchemy
 cryptography
 requests
 pytest
+python-dotenv

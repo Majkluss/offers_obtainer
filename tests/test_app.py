@@ -1,51 +1,88 @@
 """Tests for the Offers Obtainer application"""
 import os
 import sys
-from pytest import fixture
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app import app
-from db.database import init_app
+from db.database import add_product
 
+# q: How Can i run these tests in docker?
+# a: docker-compose -f docker-compose-test.yml up --build
+# q: How should I configure it?
+# a: docker-compose -f docker-compose-test.yml up --build   # run tests in docker
+headers = {"Token": os.environ.get('API_TOKEN')}
+print(headers)
 
 SPICE_HARVESTER = {
-    "id": "3fa85f64-5717-4562-b3fc-2c963f66af45",
-    "name": "Spice Harvester",
+    "id": "42424242-4242-4242-4242-424242424242",
+    "name": "Test Spice Harvester",
     "description": "Spice Harvester obtains the Spice."
+}
+
+SAND_WORM_WITHOUT_ID = {
+    "name": "Test Sand Worm",
+    "description": "Sand Worm creates the Spice."
+}
+
+SAND_WORM_WRONG_ID = {
+    "id": "42424242-4242-4242-4242-424242424243",
+    "name": "Test Sand Worm",
+    "description": "Sand Worm creates the Spice."
 }
 
 SAND_WORM = {
-    "id": "3fa85f64-5717-4562-b3fc-2c963f66af45",
-    "name": "Sand Worm",
-    "description": "Spice Harvester obtains the Spice."
+    "id": "42424242-4242-4242-4242-424242424242",
+    "name": "Test Sand Worm",
+    "description": "Sand Worm creates the Spice."
 }
 
-# headers = {'Bearer': os.getenv('ACCESS_TOKEN')}
-test_connection_string = "mysql+pymysql://root:root@localhost/testoffersdtb"
-# init_app(app=app, conn_string=test_connection_string)
-# init_app(test, test_connection_string)
 
-
-# from sqlalchemy import create_engine
-#
-# def init_app(app, conn_string=connection_string):
-#     """Init the database"""
-#     app.config['SQLALCHEMY_DATABASE_URI'] = conn_string
-#     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-#     db.init_app(app)
-#
-#     engine = create_engine(conn_string)
-#     with engine.connect() as conn:
-#         conn.execute("CREATE DATABASE IF NOT EXISTS testoffersdtb")
-#
-#     with app.app_context():
-#         db.create_all()
-
-
-
-class TestProducts:
-    def test_get_products(self):
+class TestsProducts:
+    def test_get_product_without_token(self):
         with app.test_client() as client:
-            response = client.get('/api/products')
+            response = client.get(f'/api/products')
+            assert response.status_code == 401
+
+    def test_create_product(self):
+        with app.test_client() as client:
+            with app.app_context():
+                # Add product only to database, without register to Offer microservice
+                add_product(SPICE_HARVESTER)
+                response = client.get('/api/products', headers=headers)
+                assert response.status_code == 200
+
+    def test_get_product(self):
+        with app.test_client() as client:
+            response = client.get(f'/api/products/{SPICE_HARVESTER["id"]}', headers=headers)
             assert response.status_code == 200
+            assert response.get_json() == SPICE_HARVESTER
 
+    def test_update_product_missing_id(self):
+        with app.test_client() as client:
+            response = client.patch('/api/products', headers=headers, json=SAND_WORM_WITHOUT_ID)
+            assert response.status_code == 409
 
+    def test_update_product_wrong_id(self):
+        with app.test_client() as client:
+            response = client.patch('/api/products', headers=headers, json=SAND_WORM_WRONG_ID)
+            assert response.status_code == 404
+
+    def test_update_product(self):
+        with app.test_client() as client:
+            response = client.patch('/api/products', headers=headers, json=SAND_WORM)
+            assert response.status_code == 204
+
+    def test_get_updated_product(self):
+        with app.test_client() as client:
+            response = client.get(f'/api/products/{SPICE_HARVESTER["id"]}', headers=headers)
+            assert response.status_code == 200
+            assert response.get_json() == SAND_WORM
+
+    def test_delete_product(self):
+        with app.test_client() as client:
+            response = client.delete('/api/products', headers=headers, json={"id": SPICE_HARVESTER["id"]})
+            assert response.status_code == 204
+
+    def test_get_deleted_product(self):
+        with app.test_client() as client:
+            response = client.get(f'/api/products/{SPICE_HARVESTER["id"]}', headers=headers)
+            assert response.status_code == 404

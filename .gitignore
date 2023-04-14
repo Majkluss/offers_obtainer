@@ -1,5 +1,5 @@
 .idea
 __pycache__
 .pytest_cache
-#.env
-#token
+.env
+token

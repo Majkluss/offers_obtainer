@@ -6,6 +6,7 @@ db = SQLAlchemy()
 class Products(db.Model):
     """Class database model for Products"""
     # pylint: disable=too-few-public-methods
+    __tablename__ = 'products'
     id = db.Column(db.String(36), primary_key=True)
     name = db.Column(db.String(155))
     description = db.Column(db.String(255))
@@ -20,14 +21,10 @@ class Products(db.Model):
         }
 
 
-class TestProducts(Products):
-    """Class database model for Products for tests"""
-    __tablename__ = 'test_products'
-
-
 class Offers(db.Model):
     """Class database model for Offers"""
     # pylint: disable=too-few-public-methods
+    __tablename__ = 'offers'
     id = db.Column(db.String(36), primary_key=True)
     price = db.Column(db.Integer)
     items_in_stock = db.Column(db.Integer)
@@ -41,8 +38,3 @@ class Offers(db.Model):
             'items_in_stock': self.items_in_stock,
             'product_id': self.product_id
         }
-
-
-class TestOffers(Offers):
-    """Class database model for Offers for tests"""
-    __tablename__ = 'test_offers'

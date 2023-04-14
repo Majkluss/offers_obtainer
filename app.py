@@ -1,164 +1,186 @@
 """Main application code"""
 import os
-import sys
+from functools import wraps
 from flask import Flask, request, make_response
 from flask_apscheduler import APScheduler
-import requests
 from sqlalchemy.exc import IntegrityError
-from db.database import init_app, add_product, update_product, delete_product,\
-    add_offers, get_all_products, get_offers, update_offers
-
+from dotenv import load_dotenv
+import requests
+import db.database as db
+# from db.database import init_app, add_product, update_product, delete_product,\
+#     add_offers, get_all_products, get_offers_by_id, get_all_offers,\
+#     update_offers, get_product_by_id
 
 app = Flask(__name__)
-init_app(app)
+db.init_app(app)
+load_dotenv()
 
 # Load the environment variables from the .env file
-# REFRESH_TOKEN = os.getenv('REFRESH_TOKEN')
-# OFFERS_URL = os.getenv('OFFERS_URL')
-# API_TOKEN = os.getenv('API_TOKEN')
+REFRESH_TOKEN = os.environ['REFRESH_TOKEN']
+OFFERS_URL = os.environ['OFFERS_URL']
+API_TOKEN = os.environ['API_TOKEN']
 
-REFRESH_TOKEN = "ec209bf0-1212-47d5-be33-f06a2d995e63"
-OFFERS_URL = "https://python.exercise.applifting.cz"
+app.config['ACCESS_TOKEN'] = None
+
 REQUEST_TIMEOUT = 10
-SCHEDULER_INTERVAL = 60  # How often to update offers database
+SCHEDULER_INTERVAL = 60  # How often to update offers database in seconds
 
 
 # Load latest ACCESS_TOKEN from previous session
 with open("token", "r", encoding="utf-8") as token_file:
-    os.environ['ACCESS_TOKEN'] = token_file.readline()
+    token = token_file.readline()
+    if token:
+        with app.app_context():
+            app.config['ACCESS_TOKEN'] = token
 
 
-def update_token():
-    """Get new token and save it"""
-    response = get_access_token()
-    if response.status_code == 201:
-        access_token = response.json()["access_token"]
-        app.logger.debug(access_token)
-        os.environ['ACCESS_TOKEN'] = access_token
-
-        # Save current token to the cache file to use it between the sessions
-        # To avoid "Cannot generate access token because another is valid" condition
-        with open("token", "w", encoding="utf-8") as file:
-            file.write(access_token)
-    return response
+@app.before_request
+def check_api_token():
+    """Check if API token is valid"""
+    api_token = request.headers.get("Token")
+    if not api_token or api_token != API_TOKEN:
+        return make_response({'message': 'Token missing or incorrect'}), 401
 
 
-@app.post('/api/refresh_access_token')
-def refresh_access_token():
-    """Refresh access token for the Offers microservice"""
-    response = update_token()
-    return make_response(response.text), response.status_code
+def update_access_token(func):
+    """Check if access token is valid and update it if needed and possible"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        response = get_access_token()
+        if response.status_code == 201:
+            access_token = response.json()["access_token"]
+            app.config['ACCESS_TOKEN'] = access_token
+            app.logger.debug(app.config['ACCESS_TOKEN'])
+            # Save current token to the cache file to use it between the sessions
+            # To avoid "Cannot generate access token because another is valid" condition
+            with open("token", "w", encoding="utf-8") as file:
+                file.write(access_token)
+        return func(*args, **kwargs)
+    return wrapper
 
 
-def get_access_token() -> requests.models.Response:
+def update_all_offers():
+    """Call offers update for all products in database"""
+    with app.app_context():
+        app.logger.debug("Updating offers...")
+        products = db.get_all_products()
+        for product in products:
+            update_offers_for_product(product["id"])
+
+
+def update_offers_for_product(product_id):
+    """Update all offers in database for given product_id using Offers microservice"""
+    response = get_latest_offers(product_id)
+    if response.status_code == 200:
+        db.update_offers(response.json())
+
+
+# --- Offers microservice endpoints ---
+def get_access_token():
     """Get a new token if the old one is expired"""
     url = f"{OFFERS_URL}/api/v1/auth"
     return requests.post(url=url, headers={'Bearer': REFRESH_TOKEN}, timeout=REQUEST_TIMEOUT)
 
 
-def register_product(product_json) -> requests.models.Response:
+@update_access_token
+def register_product(product_json):
     """Register a new product to the Offers microservice and save it to database"""
     url = f'{OFFERS_URL}/api/v1/products/register'
-    response = requests.post(url=url,
-                             headers={'Bearer': os.environ['ACCESS_TOKEN']},
-                             json=product_json,
+    response = requests.post(url=url, headers={'Bearer': app.config['ACCESS_TOKEN']}, json=product_json,
                              timeout=REQUEST_TIMEOUT)
-    if response.status_code == 401:
-        refresh_access_token()
     return response
 
 
-def get_latest_offers(product_id) -> requests.models.Response:
+@update_access_token
+def get_latest_offers(product_id):
     """Get latest offers from the Offers microservice of product with given product_id and save them to database"""
     url = f"{OFFERS_URL}/api/v1/products/{product_id}/offers"
-    response = requests.get(url=url,
-                            headers={'Bearer': os.environ['ACCESS_TOKEN']},
-                            timeout=REQUEST_TIMEOUT)
+    response = requests.get(url=url, headers={'Bearer': app.config['ACCESS_TOKEN']}, timeout=REQUEST_TIMEOUT)
+    return response
+# --- Offers microservice endpoints end ---
 
-    if response.status_code == 401:
-        refresh_access_token()
+
+@app.post('/api/refresh_access_token')
+def refresh_access_token():
+    """Refresh access token for the Offers microservice"""
+    acces_token = update_access_token()
+    if acces_token:
+        return make_response({'access_token': acces_token}), 201
+    return make_response({'message': 'Cannot refresh access token'}), 409
+
+
+def add_new_product(product_json):
+    """Complete process of adding new product"""
+    # Register new product to Offer microservice
+    response = register_product(product_json)
+    if response.status_code == 201:
+        # If success, add product to database
+        db.add_product(product_json=product_json)
+
+        # Get latest offers for the product from Offer microservice
+        response = get_latest_offers(product_json["id"])
+        if response.status_code == 200:
+            # If success, add offers to database
+            db.add_offers(response=response, product_id=product_json["id"])
     return response
 
 
 @app.route('/api/products', methods=['GET', 'POST', 'PATCH', 'DELETE'])
-def product_handler():
+@app.get('/api/products/<string:product_id>')
+def product_handler(product_id=None):
     """Handler for products requests"""
     method = request.method
-
     # POST - Add new product
     if method == "POST":
-        product_json = request.get_json()
-
-        # Register new product to Offer microservice
-        response = register_product(product_json)
-
-        if response.status_code == 201:
-            # If success, add product to database
-            add_product(product_json=product_json)
-
-            # Get latest offers for the product from Offer microservice
-            response = get_latest_offers(product_json["id"])
-            if response.status_code == 200:
-                # If success, add offers to database
-                add_offers(response=response, product_id=product_json["id"])
-
-        return make_response(response.text), response.status_code
+        try:
+            response = add_new_product(request.get_json())
+            return make_response(response.text), response.status_code
+        except IntegrityError:
+            return make_response({'message': 'Product already exists'}), 409
 
     if method == "PATCH" or method == "DELETE":
-        product_id = request.json.get('id')
-        if not product_id:
+        json_product_id = request.json.get('id')
+        if not json_product_id:
             return make_response({'message': 'Missing product ID'}), 409
-
-        response = False
+        response = ""
 
         # PATCH - Update an existing product
         if method == "PATCH":
-            response = update_product(
-                product_id=product_id,
+            response = db.update_product(
+                product_id=json_product_id,
                 new_name=request.json.get('name'),
                 new_description=request.json.get('description'))
 
         # DELETE - Delete an existing product
         elif method == "DELETE":
-            response = delete_product(product_id=product_id)
+            response = db.delete_product(product_id=json_product_id)
 
         if response is False:
             return make_response({'message': 'Product not found'}), 404
-
         return make_response(), 204
 
+    # GET - Get product by ID
+    if product_id:
+        product = db.get_product_by_id(product_id)
+        if product is None:
+            return make_response({'message': 'Product not found'}), 404
+        return make_response(product.to_dict()), 200
+
     # GET - Get all products
-    return make_response(get_all_products()), 200
+    return make_response(db.get_all_products()), 200
 
 
 @app.get('/api/offers')
 @app.get('/api/offers/<string:product_id>')
 def offers_handler(product_id=None):
     """Handler for offers requests"""
-    offers = get_offers(product_id=product_id)
+    if product_id:
+        offers = db.get_offers_by_id(product_id=product_id)
+        if offers is None:
+            return make_response({'message': 'Product not found'}), 404
+    else:
+        offers = db.get_all_offers()
     return make_response(offers), 200
-
-
-@app.patch('/api/offers')
-def offers_updater():
-    """Handler for offers requests"""
-    update_all_offers()
-    return make_response(), 200
-
-
-def update_all_offers():
-    """Call offers update for all products in database"""
-    with app.app_context():
-        products = get_all_products()
-        for product in products:
-            update_offers_for_product(product["id"])
-
-
-def update_offers_for_product(product_id) -> None:
-    """Update all offers in database for given product_id using Offers microservice"""
-    offers = get_latest_offers(product_id)
-    if offers.status_code == 200:
-        update_offers(offers.json())
 
 
 # Run the scheduler, which will periodically call the update_all_offers function
@@ -173,8 +195,7 @@ scheduler.add_job(id=INTERVAL_TASK_ID,
                   seconds=SCHEDULER_INTERVAL)
 
 
-if __name__ == '__main__':
-    app.run(debug=True)
+if __name__ == "__main__":
+    app.run(debug=True, host='0.0.0.0', use_reloader=False)
 
-# TODO - dodělat testy
-# TODO - dodělat check api tokenu pomocí app.before_request
+# TODO Update readme
